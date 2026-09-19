@@ -1,56 +1,7 @@
 import os
 import sys
-import json
-import urllib.request
 from google import genai
 from google.genai import types
-
-def get_latest_completed_race_data():
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Referer': 'https://www.nascar.com/',
-        'Accept': 'application/json'
-    }
-
-    # Fetch the master schedule feed for 2026 Cup Series (Series ID 1)
-    schedule_url = "https://cf.nascar.com/cpm/prod/2026/1/schedule.json"
-    
-    try:
-        req = urllib.request.Request(schedule_url, headers=headers)
-        with urllib.request.urlopen(req) as response:
-            schedule_data = json.loads(response.read().decode())
-            
-            # Extract races list (handles both list and dict formats)
-            races = schedule_data.get("race_list", schedule_data) if isinstance(schedule_data, dict) else schedule_data
-
-            # Filter for completed races (where results_posted is True or race_status == 3)
-            completed_races = [
-                r for r in races 
-                if isinstance(r, dict) and (r.get("results_posted") is True or r.get("race_status") == 3)
-            ]
-
-            if not completed_races:
-                print("No completed races found in the 2026 schedule feed.")
-                return None
-
-            # Get the most recent completed race (last item in the completed list)
-            latest_race = completed_races[-1]
-            race_id = latest_race["race_id"]
-            race_name = latest_race.get("race_name", "Unknown Race")
-            season = latest_race.get("season", 2026)
-            series_id = latest_race.get("series_id", 1)
-
-            print(f"Found latest completed race: {race_name} (ID: {race_id}, Season: {season})")
-
-            # Fetch official results JSON for that specific race ID
-            results_url = f"https://cf.nascar.com/cpm/prod/{season}/{series_id}/{race_id}/results.json"
-            req_results = urllib.request.Request(results_url, headers=headers)
-            with urllib.request.urlopen(req_results) as res_response:
-                return json.loads(res_response.read().decode())
-
-    except Exception as e:
-        print(f"Error fetching schedule or race data: {e}")
-        return None
 
 def generate_weekly_csv():
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -58,35 +9,29 @@ def generate_weekly_csv():
         print("Error: GEMINI_API_KEY environment variable is not set.")
         sys.exit(1)
 
-    raw_data = get_latest_completed_race_data()
-    if not raw_data:
-        print("Error: Could not retrieve raw race data.")
-        sys.exit(1)
-
     client = genai.Client(api_key=api_key)
 
-    prompt = f"""
-    You are a sports data processing assistant. Provide the NASCAR Cup Series race results for all 36 drivers in the race provided in the payload.
+    prompt = """
+    Search the web for the official results of the most recent NASCAR Cup Series race.
+    Generate a full 36-driver CSV list for all drivers who competed in finishing order (Position 1 through 36).
     
     CRITICAL FORMAT REQUIREMENTS:
-    - Output ONLY raw CSV text. Do not include markdown code blocks, ```csv, or conversational text.
-    - Output all 36 drivers in finishing order (Position 1 through 36).
+    - Output ONLY raw CSV text with no markdown code blocks (no ``` or ```csv) or conversational text.
     - Do NOT include lap times or speeds.
-    - Set Fastest_Lap to 1 if the driver had the fastest lap of the race, otherwise 0.
+    - Set Fastest_Lap to 1 if the driver set the fastest lap of the race, otherwise 0.
     
     Header format:
     Position,First_Name,Last_Name,Points,Stage_1,Stage_2,Stage_3,Fastest_Lap
-
-    Raw Data Payload:
-    {json.dumps(raw_data)}
     """
 
     try:
+        # Enable Google Search Grounding tool
         response = client.models.generate_content(
             model='gemini-3.6-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=0.0
+                temperature=0.0,
+                tools=[{"google_search": {}}]  # Allows Gemini to search the web live
             )
         )
 
