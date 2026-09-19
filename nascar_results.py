@@ -134,6 +134,13 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
 
+    # Also save as latest.csv for easy access
+    latest_path = output_dir / "latest.csv"
+    with open(latest_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
     print("\n" + "-" * 65)
     print(f"Saved → {csv_path}")
     print("Done.")
