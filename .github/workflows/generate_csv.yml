@@ -4,7 +4,7 @@ on:
   schedule:
     # Runs automatically every Monday morning at 6:00 AM UTC
     - cron: '0 6 * * 1'
-  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+  workflow_dispatch: # Allows manual run button
 
 jobs:
   build:
@@ -19,10 +19,13 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install dependencies
+        run: |
+          pip install curl_cffi
+
       - name: Run CSV Generator
         run: python generate_csv.py
-      - name: Install dependencies
-        run: pip install curl_cffi
+
       - name: Commit and push generated CSV
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
