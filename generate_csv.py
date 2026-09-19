@@ -5,56 +5,52 @@ import urllib.request
 from google import genai
 from google.genai import types
 
-def get_latest_race_data():
+def get_latest_completed_race_data():
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Referer': 'https://www.nascar.com/',
         'Accept': 'application/json'
     }
 
-    # 1. Fetch current live-feed or season schedule to resolve active race ID
+    # Fetch the master schedule feed for 2026 Cup Series (Series ID 1)
+    schedule_url = "https://cf.nascar.com/cpm/prod/2026/1/schedule.json"
+    
     try:
-        live_url = "https://cf.nascar.com/live/feeds/live-feed.json"
-        req = urllib.request.Request(live_url, headers=headers)
+        req = urllib.request.Request(schedule_url, headers=headers)
         with urllib.request.urlopen(req) as response:
-            live_data = json.loads(response.read().decode())
-            race_id = live_data.get("race_id")
-            season = live_data.get("season")
-            series_id = live_data.get("series_id", 1)
+            schedule_data = json.loads(response.read().decode())
+            
+            # Extract races list (handles both list and dict formats)
+            races = schedule_data.get("race_list", schedule_data) if isinstance(schedule_data, dict) else schedule_data
 
-            if race_id and season:
-                results_url = f"https://cf.nascar.com/cpm/prod/{season}/{series_id}/{race_id}/results.json"
-                req_results = urllib.request.Request(results_url, headers=headers)
-                with urllib.request.urlopen(req_results) as res_response:
-                    data = json.loads(res_response.read().decode())
-                    print(f"Successfully fetched race results for Race ID {race_id} ({season} Season).")
-                    return data
+            # Filter for completed races (where results_posted is True or race_status == 3)
+            completed_races = [
+                r for r in races 
+                if isinstance(r, dict) and (r.get("results_posted") is True or r.get("race_status") == 3)
+            ]
+
+            if not completed_races:
+                print("No completed races found in the 2026 schedule feed.")
+                return None
+
+            # Get the most recent completed race (last item in the completed list)
+            latest_race = completed_races[-1]
+            race_id = latest_race["race_id"]
+            race_name = latest_race.get("race_name", "Unknown Race")
+            season = latest_race.get("season", 2026)
+            series_id = latest_race.get("series_id", 1)
+
+            print(f"Found latest completed race: {race_name} (ID: {race_id}, Season: {season})")
+
+            # Fetch official results JSON for that specific race ID
+            results_url = f"https://cf.nascar.com/cpm/prod/{season}/{series_id}/{race_id}/results.json"
+            req_results = urllib.request.Request(results_url, headers=headers)
+            with urllib.request.urlopen(req_results) as res_response:
+                return json.loads(res_response.read().decode())
+
     except Exception as e:
-        print(f"Primary live feed fetch failed ({e}). Trying schedule index backup...")
-
-    # 2. Backup: Fetch schedule index for current active race
-    try:
-        sched_url = "https://cf.nascar.com/cpm/prod/2026/1/race_list.json"
-        req_sched = urllib.request.Request(sched_url, headers=headers)
-        with urllib.request.urlopen(req_sched) as response:
-            schedule = json.loads(response.read().decode())
-            # Find the last completed race in the list
-            completed_races = [r for r in schedule if r.get("race_status") == 3 or r.get("results_posted", False)]
-            if completed_races:
-                last_race = completed_races[-1]
-                race_id = last_race["race_id"]
-                season = last_race.get("season", 2026)
-                series_id = last_race.get("series_id", 1)
-                
-                results_url = f"https://cf.nascar.com/cpm/prod/{season}/{series_id}/{race_id}/results.json"
-                req_results = urllib.request.Request(results_url, headers=headers)
-                with urllib.request.urlopen(req_results) as res_response:
-                    print(f"Fetched backup schedule race results for Race ID {race_id}.")
-                    return json.loads(res_response.read().decode())
-    except Exception as e:
-        print(f"Backup schedule fetch failed: {e}")
-
-    return None
+        print(f"Error fetching schedule or race data: {e}")
+        return None
 
 def generate_weekly_csv():
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -62,11 +58,15 @@ def generate_weekly_csv():
         print("Error: GEMINI_API_KEY environment variable is not set.")
         sys.exit(1)
 
-    raw_data = get_latest_race_data()
+    raw_data = get_latest_completed_race_data()
+    if not raw_data:
+        print("Error: Could not retrieve raw race data.")
+        sys.exit(1)
+
     client = genai.Client(api_key=api_key)
 
     prompt = f"""
-    You are a sports data processing assistant. Provide the NASCAR Cup Series race results for all 36 drivers in the most recent completed race provided in the payload.
+    You are a sports data processing assistant. Provide the NASCAR Cup Series race results for all 36 drivers in the race provided in the payload.
     
     CRITICAL FORMAT REQUIREMENTS:
     - Output ONLY raw CSV text. Do not include markdown code blocks, ```csv, or conversational text.
@@ -78,7 +78,7 @@ def generate_weekly_csv():
     Position,First_Name,Last_Name,Points,Stage_1,Stage_2,Stage_3,Fastest_Lap
 
     Raw Data Payload:
-    {json.dumps(raw_data) if raw_data else "Extract data for the most recently completed NASCAR Cup Series race."}
+    {json.dumps(raw_data)}
     """
 
     try:
@@ -107,7 +107,7 @@ def generate_weekly_csv():
         print("race_results.csv created successfully!")
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error generating CSV: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
