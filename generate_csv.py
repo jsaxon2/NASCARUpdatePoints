@@ -9,11 +9,20 @@ def generate_weekly_csv():
         print("Error: GEMINI_API_KEY environment variable is not set.")
         sys.exit(1)
 
-    # Initialize client explicitly pointing to v1 API version
-    client = genai.Client(
-        api_key=api_key,
-        http_options=types.HttpOptions(api_version="v1")
-    )
+    # Initialize client
+    client = genai.Client(api_key=api_key)
+
+    # Find an active available Flash model from your account dynamically
+    model_name = "gemini-2.5-flash"
+    try:
+        models = client.models.list()
+        for m in models:
+            if "flash" in m.name.lower() and "generateContent" in getattr(m, "supported_generation_methods", []):
+                model_name = m.name
+                break
+        print(f"Using model: {model_name}")
+    except Exception as e:
+        print(f"Model list query failed, defaulting to {model_name}: {e}")
 
     prompt = """
     Provide the NASCAR Cup Series race results for the most recent completed race.
@@ -24,20 +33,19 @@ def generate_weekly_csv():
     """
 
     try:
-        # Using gemini-flash-latest pointer
         response = client.models.generate_content(
-            model='gemini-flash-latest',
+            model=model_name,
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
             )
         )
 
-        if not response.text:
+        if not response or not response.text:
             print("Error: Empty response received from Gemini API.")
             sys.exit(1)
 
-        # Strip markdown formatting if present
+        # Clean markdown code formatting
         csv_text = response.text.strip()
         if csv_text.startswith("```"):
             csv_text = csv_text.split("\n", 1)[1]
