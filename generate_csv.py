@@ -21,9 +21,9 @@ def generate_weekly_csv():
     """
 
     try:
-        # Call model with gemini-2.5-flash
+        # Changed model from gemini-2.5-flash to gemini-1.5-flash
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
@@ -34,7 +34,7 @@ def generate_weekly_csv():
             print("Error: Empty response received from Gemini API.")
             sys.exit(1)
 
-        # Strip markdown formatting if returned
+        # Strip markdown code formatting if present
         csv_text = response.text.strip()
         if csv_text.startswith("```"):
             csv_text = csv_text.split("\n", 1)[1]
