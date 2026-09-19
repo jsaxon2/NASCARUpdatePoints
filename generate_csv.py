@@ -1,23 +1,25 @@
 import os
-import google.generativeai as genai
+from google import genai
 
-# Configure Gemini API
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+# Initialize the Gemini Client using your repository secret
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 def generate_weekly_csv():
-    # Prompting Gemini for structured CSV output
     prompt = """
     Provide the NASCAR Cup Series race results for the most recent completed race.
-    Format the output strictly as a CSV block without markdown code fences or extra explanations.
+    Format the output strictly as a CSV block without markdown code fences or extra text.
     
     Header format:
     Position,First_Name,Last_Name,Points,Stage_1,Stage_2,Stage_3,Fastest_Lap
     """
 
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    response = model.generate_content(prompt)
+    # Call Gemini using the modern Google Gen AI SDK
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt,
+    )
 
-    # Clean response and write to file
+    # Clean output
     csv_text = response.text.strip().replace("```csv", "").replace("```", "")
     
     with open("race_results.csv", "w", encoding="utf-8") as f:
