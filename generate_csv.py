@@ -3,7 +3,6 @@ import json
 import urllib.request
 import urllib.parse
 
-# Your Cloudflare Worker URL
 WORKER_URL = "https://fragrant-bonus-ba99.jsaxon2.workers.dev"
 
 def fetch_via_worker(target_url):
@@ -11,7 +10,12 @@ def fetch_via_worker(target_url):
     encoded_url = urllib.parse.quote(target_url, safe='')
     proxy_request_url = f"{WORKER_URL}?url={encoded_url}"
     
-    req = urllib.request.Request(proxy_request_url)
+    # Send custom User-Agent to avoid urllib default blocking
+    req = urllib.request.Request(
+        proxy_request_url, 
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    )
+    
     try:
         with urllib.request.urlopen(req, timeout=15) as response:
             return json.loads(response.read().decode('utf-8'))
