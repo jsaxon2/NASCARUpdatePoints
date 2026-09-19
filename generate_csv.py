@@ -4,7 +4,6 @@ import csv
 from curl_cffi import requests
 
 def generate_weekly_csv():
-    # Create a persistent browser session with full Chrome 120 TLS fingerprinting
     session = requests.Session(impersonate="chrome120")
     
     headers = {
@@ -12,35 +11,23 @@ def generate_weekly_csv():
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://www.espn.com/",
-        "Origin": "https://www.espn.com",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-site"
+        "Origin": "https://www.espn.com"
     }
 
-    print("Fetching Cup Series schedule from ESPN API...")
-    scoreboard_url = "https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard"
+    print("Fetching 2026 NASCAR Cup Series schedule from ESPN API...")
+    
+    # Query full schedule endpoint for 2026 season
+    schedule_url = "https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard?dates=2026"
     
     data = None
     try:
-        res = session.get(scoreboard_url, headers=headers, timeout=15)
+        res = session.get(schedule_url, headers=headers, timeout=15)
         if res.status_code == 200:
             data = res.json()
         else:
-            print(f"Primary endpoint returned HTTP {res.status_code}. Retrying historical date range...")
+            print(f"Schedule endpoint returned HTTP {res.status_code}")
     except Exception as e:
-        print(f"Error requesting primary endpoint: {e}")
-
-    if not data or "events" not in data:
-        fallback_url = "https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard?dates=20260201-20261130"
-        try:
-            res = session.get(fallback_url, headers=headers, timeout=15)
-            if res.status_code == 200:
-                data = res.json()
-            else:
-                print(f"Fallback endpoint returned HTTP {res.status_code}")
-        except Exception as e:
-            print(f"Error requesting fallback endpoint: {e}")
+        print(f"Error fetching schedule: {e}")
 
     if not data or "events" not in data:
         print("Error: Unable to retrieve schedule or event list from ESPN API.")
@@ -49,13 +36,20 @@ def generate_weekly_csv():
     completed_events = []
     for event in data.get("events", []):
         status_info = event.get("status", {}).get("type", {})
-        if status_info.get("completed") or status_info.get("name") in ["STATUS_FINAL", "STATUS_COMPLETED"]:
+        is_completed = status_info.get("completed") is True or status_info.get("name") in ["STATUS_FINAL", "STATUS_COMPLETED"]
+        
+        # Ensure event has competition results available
+        competitions = event.get("competitions", [])
+        has_competitors = len(competitions) > 0 and len(competitions[0].get("competitors", [])) > 0
+        
+        if is_completed or has_competitors:
             completed_events.append(event)
 
     if not completed_events:
         print("Error: No completed 2026 Cup Series events found in feed.")
         sys.exit(1)
 
+    # Pick the most recently completed race
     latest_event = completed_events[-1]
     race_name = latest_event.get("name", "NASCAR Cup Race")
     print(f"Targeting Latest Race: {race_name}")
