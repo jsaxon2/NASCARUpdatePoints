@@ -22,7 +22,9 @@ jobs:
         python-version: '3.11'
 
     - name: Install dependencies
-      run: pip install requests cloudscraper
+      run: |
+        pip install playwright
+        playwright install chromium
 
     - name: Run CSV Generator
       env:
