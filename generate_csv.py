@@ -1,157 +1,121 @@
 import sys
-import re
+import json
+import urllib.request
 import csv
-import requests
-from bs4 import BeautifulSoup
 
-def generate_weekly_csv():
+def fetch_json_espn(url):
+    """Fetches JSON using standard urllib with browser-mimicking headers."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9"
     }
-
-    # 1. Fetch 2026 Cup Series Schedule to find the latest completed race URL
-    schedule_url = "https://www.racing-reference.info/yeardet/2026/W"
-    print(f"Fetching season schedule from {schedule_url}...")
-    
+    req = urllib.request.Request(url, headers=headers)
     try:
-        response = requests.get(schedule_url, headers=headers, timeout=15)
-        if response.status_code != 200:
-            print(f"Failed to fetch schedule. HTTP {response.status_code}")
-            sys.exit(1)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status == 200:
+                return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        print(f"Connection error fetching schedule: {e}")
-        sys.exit(1)
+        print(f"Fetch failed for {url}: {e}")
+    return None
 
-    soup = BeautifulSoup(response.text, "html.parser")
+def generate_weekly_csv():
+    print("Fetching Cup Series schedule from ESPN API...")
     
-    # Find links pointing to individual race results: race-results?series=W&raceId=2026-XX
-    race_links = []
-    for a in soup.find_all("a", href=True):
-        if "race-results" in a["href"] and "series=W" in a["href"]:
-            href = a["href"]
-            if not href.startswith("http"):
-                href = "https://www.racing-reference.info" + href
-            race_links.append(href)
+    # ESPN Premier (NASCAR Cup Series) scoreboard endpoint
+    scoreboard_url = "https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard"
+    data = fetch_json_espn(scoreboard_url)
 
-    if not race_links:
-        print("Error: No completed 2026 Cup Series race result links found on schedule.")
+    if not data or "events" not in data:
+        # Fallback to season date range search
+        print("Checking full season schedule range...")
+        scoreboard_url = "https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard?dates=20260201-20261130"
+        data = fetch_json_espn(scoreboard_url)
+
+    if not data or "events" not in data:
+        print("Error: Unable to retrieve schedule or event list from ESPN.")
         sys.exit(1)
 
-    # Pick the most recent completed race link
-    latest_race_url = race_links[-1]
-    print(f"Targeting Latest Race: {latest_race_url}")
+    completed_events = []
+    for event in data.get("events", []):
+        status_info = event.get("status", {}).get("type", {})
+        if status_info.get("completed") or status_info.get("name") in ["STATUS_FINAL", "STATUS_COMPLETED"]:
+            completed_events.append(event)
 
-    # 2. Fetch the Race Results Page
-    try:
-        race_res = requests.get(latest_race_url, headers=headers, timeout=15)
-        if race_res.status_code != 200:
-            print(f"Failed to fetch race results. HTTP {race_res.status_code}")
-            sys.exit(1)
-    except Exception as e:
-        print(f"Connection error fetching race page: {e}")
+    if not completed_events:
+        print("Error: No completed 2026 Cup Series events found in feed.")
         sys.exit(1)
 
-    race_soup = BeautifulSoup(race_res.text, "html.parser")
-    
-    # Locate table containing driver race results
-    results_table = None
-    for table in race_soup.find_all("table"):
-        text = table.get_text()
-        if "Driver" in text and ("Pts" in text or "Laps" in text or "Pos" in text):
-            results_table = table
-            break
+    # Get latest completed race event
+    latest_event = completed_events[-1]
+    race_name = latest_event.get("name", "NASCAR Cup Race")
+    print(f"Targeting Latest Race: {race_name}")
 
-    if not results_table:
-        print("Error: Could not locate results table on race page.")
+    competitions = latest_event.get("competitions", [{}])
+    competitors = competitions[0].get("competitors", []) if competitions else []
+
+    if not competitors:
+        print("Error: No driver entry records found in target event.")
         sys.exit(1)
 
-    rows = results_table.find_all("tr")
-    driver_data = []
+    # Sort drivers by finish position
+    def safe_order(c):
+        try:
+            return int(c.get("order") or c.get("place") or 999)
+        except (ValueError, TypeError):
+            return 999
 
-    # Parse headers to identify dynamic column indexes
-    header_tr = rows[0]
-    headers_text = [th.get_text().strip() for th in header_tr.find_all(["th", "td"])]
-    
-    pos_idx = 0
-    driver_idx = 2
-    pts_idx = -1
+    competitors.sort(key=safe_order)
 
-    for i, h in enumerate(headers_text):
-        if h in ["Pos", "POS", "Fin"]:
-            pos_idx = i
-        elif h in ["Driver", "DRIVER"]:
-            driver_idx = i
-        elif h in ["Pts", "PTS", "Points"]:
-            pts_idx = i
+    # Parse Top 36 Drivers
+    driver_rows = []
+    for comp in competitors[:36]:
+        pos = comp.get("order") or comp.get("place") or ""
+        athlete = comp.get("athlete", {}) if isinstance(comp.get("athlete"), dict) else {}
 
-    # Parse Driver Data Rows
-    for row in rows[1:]:
-        cols = [td.get_text().strip() for td in row.find_all(["td", "th"])]
-        if len(cols) <= max(pos_idx, driver_idx):
-            continue
+        first_name = athlete.get("firstName") or athlete.get("shortName", "")
+        last_name = athlete.get("lastName") or athlete.get("displayName", "")
 
-        pos_str = cols[pos_idx]
-        if not pos_str.isdigit():
-            continue
+        if not first_name and not last_name:
+            full_name = athlete.get("displayName") or comp.get("name", "")
+            if " " in full_name:
+                first_name, last_name = full_name.split(" ", 1)
+            else:
+                first_name = full_name
 
-        pos = int(pos_str)
-        full_name = cols[driver_idx]
-        
-        # Split first and last name cleanly
-        if " " in full_name:
-            first_name, last_name = full_name.split(" ", 1)
-        else:
-            first_name, last_name = full_name, ""
+        s1, s2, s3 = 0, 0, 0
+        linescores = comp.get("linescores", [])
+        for ls in linescores:
+            p = ls.get("period")
+            val = int(ls.get("value", 0))
+            if p == 1:
+                s1 = val
+            elif p == 2:
+                s2 = val
+            elif p == 3:
+                s3 = val
 
-        pts = 0
-        if pts_idx != -1 and pts_idx < len(cols):
+        pts = int(comp.get("score", 0) or comp.get("points", 0) or 0)
+        if pts == 0 and pos:
             try:
-                pts = int(re.sub(r"\D", "", cols[pts_idx]))
+                p_val = int(pos)
+                base_pts = 40 if p_val == 1 else max(1, 36 - (p_val - 2))
+                pts = base_pts + s1 + s2 + s3
             except ValueError:
                 pts = 0
 
-        # Base NASCAR points calculation if unpopulated
-        if pts == 0:
-            pts = 40 if pos == 1 else max(1, 36 - (pos - 2))
+        is_fastest_lap = 1 if comp.get("fastestLap") is True else 0
 
-        driver_data.append({
-            "pos": pos,
-            "first_name": first_name,
-            "last_name": last_name,
-            "pts": pts,
-            "stage_1": 0,
-            "stage_2": 0,
-            "stage_3": 0,
-            "fastest_lap": 0
-        })
+        driver_rows.append([pos, first_name, last_name, pts, s1, s2, s3, is_fastest_lap])
 
-    if not driver_data:
-        print("Error: No driver rows successfully parsed.")
-        sys.exit(1)
-
-    # Sort drivers by position
-    driver_data.sort(key=lambda x: x["pos"])
-
-    # 3. Write CSV Output
+    # Write CSV
     csv_headers = ["Position", "First_Name", "Last_Name", "Points", "Stage_1", "Stage_2", "Stage_3", "Fastest_Lap"]
-    
     with open("race_results.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(csv_headers)
-        for d in driver_data[:36]:
-            writer.writerow([
-                d["pos"],
-                d["first_name"],
-                d["last_name"],
-                d["pts"],
-                d["stage_1"],
-                d["stage_2"],
-                d["stage_3"],
-                d["fastest_lap"]
-            ])
+        writer.writerows(driver_rows)
 
-    print("race_results.csv generated successfully from Racing-Reference!")
+    print("race_results.csv generated successfully!")
 
 if __name__ == "__main__":
     generate_weekly_csv()
