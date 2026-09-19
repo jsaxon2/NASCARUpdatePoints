@@ -1,43 +1,46 @@
 import sys
 import json
+import urllib.parse
 from curl_cffi import requests
 
-def fetch_nascar_json(endpoint_path):
+def fetch_nascar_json_via_proxy(endpoint_path):
     """
-    Fetches JSON feeds directly from NASCAR's CDN by spoofing Chrome's TLS fingerprint (JA3/JA4).
-    This bypasses Cloudflare WAF restrictions completely without external proxies.
+    Routes NASCAR CDN requests through an edge proxy to bypass 
+    GitHub Actions datacenter IP blocks, while maintaining real browser headers.
     """
-    urls = [
-        f"https://cf.nascar.com/cpm/prod/{endpoint_path}",
-        f"https://cf.nascar.com/cacher/{endpoint_path}"
+    target_url = f"https://cf.nascar.com/cpm/prod/{endpoint_path}"
+    encoded_url = urllib.parse.quote(target_url, safe='')
+    
+    # Primary and fallback proxies
+    proxy_urls = [
+        f"https://corsproxy.io/?{encoded_url}",
+        f"https://api.allorigins.win/raw?url={encoded_url}"
     ]
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.nascar.com/",
-        "Origin": "https://www.nascar.com"
+        "Referer": "https://www.nascar.com/"
     }
 
-    for url in urls:
+    for proxy_url in proxy_urls:
         try:
-            response = requests.get(url, headers=headers, impersonate="chrome120", timeout=15)
+            response = requests.get(proxy_url, headers=headers, impersonate="chrome120", timeout=15)
             if response.status_code == 200:
                 return response.json()
             else:
-                print(f"HTTP {response.status_code} for {url}")
+                print(f"Proxy HTTP {response.status_code} for {proxy_url}")
         except Exception as e:
-            print(f"Error requesting {url}: {e}")
+            print(f"Error fetching via proxy: {e}")
 
     return None
 
 def generate_weekly_csv():
-    print("Fetching 2026 schedule feed via TLS impersonation...")
-    schedule_data = fetch_nascar_json("2026/1/schedule.json")
+    print("Fetching 2026 schedule feed via edge proxy...")
+    schedule_data = fetch_nascar_json_via_proxy("2026/1/schedule.json")
 
     if not schedule_data:
-        print("Error: Could not retrieve schedule feed from NASCAR CDN.")
+        print("Error: Could not retrieve schedule feed.")
         sys.exit(1)
 
     races = schedule_data.get("race_list", schedule_data) if isinstance(schedule_data, dict) else schedule_data
@@ -59,15 +62,14 @@ def generate_weekly_csv():
 
     print(f"Found latest completed race: {latest_race.get('race_name', 'Unknown')} (ID: {race_id})")
 
-    # Fetch specific race results JSON
+    # Fetch race results JSON
     results_endpoint = f"{season}/{series_id}/{race_id}/results.json"
-    results_data = fetch_nascar_json(results_endpoint)
+    results_data = fetch_nascar_json_via_proxy(results_endpoint)
 
     if not results_data:
         print("Error: Could not retrieve race results.")
         sys.exit(1)
 
-    # Parse driver rows into strict CSV format
     driver_rows = results_data.get("data", results_data) if isinstance(results_data, dict) else results_data
     if not isinstance(driver_rows, list):
         print("Error: Unexpected JSON structure in race results.")
@@ -75,7 +77,7 @@ def generate_weekly_csv():
 
     csv_lines = ["Position,First_Name,Last_Name,Points,Stage_1,Stage_2,Stage_3,Fastest_Lap"]
 
-    # Identify driver with fastest lap overall
+    # Identify driver with overall fastest lap
     fastest_lap_driver_id = None
     best_lap_time = float('inf')
     for driver in driver_rows:
@@ -84,7 +86,7 @@ def generate_weekly_csv():
             best_lap_time = lap_time
             fastest_lap_driver_id = driver.get("driver_id") or driver.get("finishing_position")
 
-    # Target full 36-driver field
+    # Target 36 drivers
     for driver in driver_rows[:36]:
         pos = driver.get("finishing_position") or driver.get("position", "")
         
@@ -100,7 +102,7 @@ def generate_weekly_csv():
         s2 = driver.get("stage_2_points", 0)
         s3 = driver.get("stage_3_points", 0)
 
-        # Binary flag (1 if fastest lap, else 0)
+        # Flag 1 if driver had fastest lap, else 0
         driver_identifier = driver.get("driver_id") or pos
         is_fastest_lap = 1 if driver_identifier == fastest_lap_driver_id else 0
 
