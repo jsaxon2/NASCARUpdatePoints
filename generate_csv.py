@@ -5,36 +5,44 @@ import urllib.request
 from google import genai
 from google.genai import types
 
-def generate_weekly_csv():
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("Error: GEMINI_API_KEY environment variable is not set.")
-        sys.exit(1)
-
-    # 1. Fetch latest race JSON directly with browser headers to prevent HTTP 403
-    json_url = "https://cf.nascar.com/cpm/prod/2026/1/5412/results.json"
-    raw_data = None
-    
+def get_latest_race_data():
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Referer': 'https://www.nascar.com/',
         'Accept': 'application/json'
     }
 
+    # Query NASCAR's live run-feed to find the active/most recent race metadata
+    live_url = "https://cf.nascar.com/live/feeds/live-feed.json"
     try:
-        req = urllib.request.Request(json_url, headers=headers)
+        req = urllib.request.Request(live_url, headers=headers)
         with urllib.request.urlopen(req) as response:
-            raw_data = json.loads(response.read().decode())
-            print("Successfully fetched live NASCAR JSON feed.")
-    except Exception as e:
-        print(f"Warning: Could not fetch live feed directly ({e}). Prompting Gemini directly.")
+            live_data = json.loads(response.read().decode())
+            race_id = live_data.get("race_id")
+            season = live_data.get("season", 2026)
+            series_id = live_data.get("series_id", 1)
 
-    # 2. Initialize Client
+            if race_id:
+                results_url = f"https://cf.nascar.com/cpm/prod/{season}/{series_id}/{race_id}/results.json"
+                req_results = urllib.request.Request(results_url, headers=headers)
+                with urllib.request.urlopen(req_results) as res_response:
+                    return json.loads(res_response.read().decode())
+    except Exception as e:
+        print(f"Could not fetch dynamic live feed: {e}")
+
+    return None
+
+def generate_weekly_csv():
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("Error: GEMINI_API_KEY environment variable is not set.")
+        sys.exit(1)
+
+    raw_data = get_latest_race_data()
     client = genai.Client(api_key=api_key)
 
-    # 3. Build prompt
     prompt = f"""
-    You are a sports data processing assistant. Provide the NASCAR Cup Series race results for all 36 drivers in the most recent race.
+    You are a sports data processing assistant. Provide the NASCAR Cup Series race results for all 36 drivers in the most recent completed race.
     
     CRITICAL FORMAT REQUIREMENTS:
     - Output ONLY raw CSV text. Do not include markdown code blocks, ```csv, or conversational text.
@@ -45,12 +53,11 @@ def generate_weekly_csv():
     Header format:
     Position,First_Name,Last_Name,Points,Stage_1,Stage_2,Stage_3,Fastest_Lap
 
-    Raw Data:
-    {json.dumps(raw_data) if raw_data else "Extract data for the most recent NASCAR Cup Series race."}
+    Raw Data Payload:
+    {json.dumps(raw_data) if raw_data else "Extract data for the most recently completed NASCAR Cup Series race."}
     """
 
     try:
-        # Changed model to gemini-3.6-flash as required by API response
         response = client.models.generate_content(
             model='gemini-3.6-flash',
             contents=prompt,
@@ -63,7 +70,6 @@ def generate_weekly_csv():
             print("Error: Empty response received from Gemini API.")
             sys.exit(1)
 
-        # Clean markdown wrappers if returned
         csv_text = response.text.strip()
         if csv_text.startswith("```"):
             csv_text = csv_text.split("\n", 1)[1]
@@ -74,7 +80,7 @@ def generate_weekly_csv():
         with open("race_results.csv", "w", encoding="utf-8") as f:
             f.write(csv_text)
             
-        print("race_results.csv generated successfully!")
+        print("race_results.csv created successfully!")
 
     except Exception as e:
         print(f"Error: {e}")
