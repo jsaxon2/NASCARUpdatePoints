@@ -12,18 +12,6 @@ def generate_weekly_csv():
     # Initialize client
     client = genai.Client(api_key=api_key)
 
-    # Find an active available Flash model from your account dynamically
-    model_name = "gemini-2.5-flash"
-    try:
-        models = client.models.list()
-        for m in models:
-            if "flash" in m.name.lower() and "generateContent" in getattr(m, "supported_generation_methods", []):
-                model_name = m.name
-                break
-        print(f"Using model: {model_name}")
-    except Exception as e:
-        print(f"Model list query failed, defaulting to {model_name}: {e}")
-
     prompt = """
     Provide the NASCAR Cup Series race results for the most recent completed race.
     Format the output strictly as a raw CSV block without markdown code fences or extra text.
@@ -33,8 +21,9 @@ def generate_weekly_csv():
     """
 
     try:
+        # Use gemini-3.6-flash as requested by the API error message
         response = client.models.generate_content(
-            model=model_name,
+            model='gemini-3.6-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
@@ -45,7 +34,7 @@ def generate_weekly_csv():
             print("Error: Empty response received from Gemini API.")
             sys.exit(1)
 
-        # Clean markdown code formatting
+        # Clean markdown formatting if present
         csv_text = response.text.strip()
         if csv_text.startswith("```"):
             csv_text = csv_text.split("\n", 1)[1]
