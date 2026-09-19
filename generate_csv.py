@@ -1,22 +1,21 @@
 import sys
 import json
-import requests
+import cloudscraper
 
 def get_latest_race_csv():
-    # Headers to bypass Cloudflare scraping restrictions
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Referer': 'https://www.nascar.com/',
-        'Accept': 'application/json, text/plain, */*'
-    }
-
-    session = requests.Session()
-    session.headers.update(headers)
+    # Initialize cloudscraper to bypass Cloudflare protection
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        }
+    )
 
     try:
         # 1. Fetch 2026 Cup Series Schedule
         sched_url = "https://cf.nascar.com/cpm/prod/2026/1/schedule.json"
-        res = session.get(sched_url, timeout=10)
+        res = scraper.get(sched_url, timeout=15)
         res.raise_for_status()
         schedule_data = res.json()
 
@@ -41,12 +40,12 @@ def get_latest_race_csv():
 
         # 2. Fetch specific race results JSON
         results_url = f"https://cf.nascar.com/cpm/prod/{season}/{series_id}/{race_id}/results.json"
-        res_results = session.get(results_url, timeout=10)
+        res_results = scraper.get(results_url, timeout=15)
         res_results.raise_for_status()
         results_data = res_results.json()
 
     except Exception as e:
-        print(f"Error fetching data directly from NASCAR CDN: {e}")
+        print(f"Error fetching data via cloudscraper: {e}")
         sys.exit(1)
 
     # 3. Parse driver rows into strict CSV format
@@ -57,7 +56,7 @@ def get_latest_race_csv():
 
     csv_lines = ["Position,First_Name,Last_Name,Points,Stage_1,Stage_2,Stage_3,Fastest_Lap"]
 
-    # Identify fastest lap overall across drivers to award 1 point
+    # Identify fastest lap overall across drivers
     fastest_lap_driver_id = None
     best_lap_time = float('inf')
     for driver in driver_rows:
@@ -82,7 +81,7 @@ def get_latest_race_csv():
         s2 = driver.get("stage_2_points", 0)
         s3 = driver.get("stage_3_points", 0)
 
-        # Output 1 if driver had fastest lap, else 0
+        # Binary 1 or 0 flag for fastest lap point
         driver_identifier = driver.get("driver_id") or pos
         is_fastest_lap = 1 if driver_identifier == fastest_lap_driver_id else 0
 
@@ -92,7 +91,7 @@ def get_latest_race_csv():
     with open("race_results.csv", "w", encoding="utf-8") as f:
         f.write("\n".join(csv_lines))
 
-    print("race_results.csv created successfully with 2026 data!")
+    print("race_results.csv created successfully with current 2026 data!")
 
 if __name__ == "__main__":
     get_latest_race_csv()
