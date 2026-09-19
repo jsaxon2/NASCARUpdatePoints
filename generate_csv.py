@@ -3,7 +3,7 @@ import json
 from curl_cffi import requests
 
 def fetch_nascar_json(url):
-    """Fetches JSON from NASCAR's public feeds using Chrome impersonation."""
+    """Fetches JSON payload using browser impersonation to bypass Cloudflare WAF."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
@@ -14,103 +14,128 @@ def fetch_nascar_json(url):
         response = requests.get(url, headers=headers, impersonate="chrome120", timeout=15)
         if response.status_code == 200:
             return response.json()
-        else:
-            print(f"HTTP {response.status_code} for {url}")
+        print(f"HTTP {response.status_code} for {url}")
     except Exception as e:
-        print(f"Error fetching {url}: {e}")
+        print(f"Error requesting {url}: {e}")
     return None
 
 def generate_weekly_csv():
-    # 1. Fetch live or points feed from NASCAR m.nascar.com edge CDN
-    print("Fetching race feed from NASCAR public feeds...")
-    live_feed_url = "https://m.nascar.com/live/feeds/live-feed.json"
-    data = fetch_nascar_json(live_feed_url)
+    # 1. Retrieve 2026 Cup Series Schedule Feed
+    print("Fetching 2026 NASCAR Cup Series schedule...")
+    sched_url = "https://cf.nascar.com/cacher/2026/race_list_basic.json"
+    sched_data = fetch_nascar_json(sched_url)
 
-    # Fallback to Cup points feed if live-feed is off-air
-    if not data or "driver" not in data:
-        print("Live feed inactive, checking Cup Series points feed...")
-        live_feed_url = "https://m.nascar.com/live/feeds/points/1.json"
-        data = fetch_nascar_json(live_feed_url)
+    if not sched_data:
+        # Fallback to general schedule endpoint
+        sched_url = "https://cf.nascar.com/cpm/prod/2026/1/schedule.json"
+        sched_data = fetch_nascar_json(sched_url)
 
-    # Secondary fallback to ESPN for base finishing order if NASCAR CDN is completely unreachable
-    if not data:
-        print("Falling back to ESPN API for race standings...")
-        espn_url = "https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard"
-        espn_data = fetch_nascar_json(espn_url)
-        if not espn_data or "events" not in espn_data:
-            print("Error: Could not retrieve data from any source.")
-            sys.exit(1)
-        
-        events = espn_data.get("events", [])
-        latest_event = events[-1] if events else {}
-        competitors = latest_event.get("competitions", [{}])[0].get("competitors", [])
+    if not sched_data:
+        print("Error: Unable to fetch NASCAR schedule feed.")
+        sys.exit(1)
 
-        csv_lines = ["Position,First_Name,Last_Name,Points,Stage_1,Stage_2,Stage_3,Fastest_Lap"]
-        for comp in competitors[:36]:
-            pos = comp.get("order") or comp.get("place") or ""
-            athlete = comp.get("athlete", {})
-            full_name = athlete.get("displayName", "")
-            if " " in full_name:
-                first_name, last_name = full_name.split(" ", 1)
-            else:
-                first_name = athlete.get("firstName", full_name)
-                last_name = athlete.get("lastName", "")
-            
-            # Base Cup Series points calculation rule
-            try:
-                p = int(pos)
-                pts = 55 if p == 1 else max(1, 36 - (p - 2))
-            except ValueError:
-                pts = 0
+    races = sched_data.get("race_list", sched_data) if isinstance(sched_data, dict) else sched_data
 
-            csv_lines.append(f"{pos},{first_name},{last_name},{pts},0,0,0,0")
+    # Filter for completed Cup Series (series_id 1) races
+    completed_races = [
+        r for r in races 
+        if isinstance(r, dict) and r.get("series_id", 1) == 1 and (
+            r.get("results_posted") is True or 
+            r.get("race_status") in [2, 3] or 
+            r.get("is_completed") is True
+        )
+    ]
 
-        with open("race_results.csv", "w", encoding="utf-8") as f:
-            f.write("\n".join(csv_lines))
-        print("race_results.csv created with base standings.")
-        return
+    if not completed_races:
+        print("Error: No completed 2026 Cup Series races found.")
+        sys.exit(1)
 
-    # Process driver rows from NASCAR JSON feed
-    driver_rows = data.get("driver", []) or data.get("data", [])
-    if not isinstance(driver_rows, list):
-        driver_rows = []
+    latest_race = completed_races[-1]
+    race_id = latest_race.get("race_id")
+    season = latest_race.get("season", 2026)
+    series_id = latest_race.get("series_id", 1)
+
+    print(f"Targeting Race: {latest_race.get('race_name', race_id)} (ID: {race_id})")
+
+    # 2. Fetch Archived Weekend Feed containing stage breakdown & lap times
+    weekend_url = f"https://cf.nascar.com/cacher/{season}/{series_id}/{race_id}/weekend-feed.json"
+    print(f"Fetching archived weekend feed from {weekend_url}...")
+    weekend_data = fetch_nascar_json(weekend_url)
+
+    driver_rows = []
+    if weekend_data and "weekend_race" in weekend_data:
+        race_info = weekend_data.get("weekend_race", [{}])[0] if isinstance(weekend_data.get("weekend_race"), list) else weekend_data.get("weekend_race", {})
+        driver_rows = race_info.get("results", [])
+
+    # Secondary lookup fallback
+    if not driver_rows:
+        results_url = f"https://cf.nascar.com/cpm/prod/{season}/{series_id}/{race_id}/results.json"
+        results_data = fetch_nascar_json(results_url)
+        if results_data:
+            driver_rows = results_data.get("data", results_data) if isinstance(results_data, dict) else results_data
+
+    if not isinstance(driver_rows, list) or not driver_rows:
+        print("Error: Could not retrieve valid driver result rows.")
+        sys.exit(1)
+
+    # Sort drivers by finishing position
+    driver_rows.sort(key=lambda x: int(x.get("finishing_position") or x.get("position") or 999))
 
     csv_lines = ["Position,First_Name,Last_Name,Points,Stage_1,Stage_2,Stage_3,Fastest_Lap"]
 
-    # Identify overall fastest lap
+    # 3. Identify driver with fastest lap across race
     fastest_lap_driver_id = None
     best_lap_time = float("inf")
 
     for driver in driver_rows:
-        lap_time = float(driver.get("best_lap_time", 0) or driver.get("best_time", 0) or 0)
-        if 0 < lap_time < best_lap_time:
-            best_lap_time = lap_time
-            fastest_lap_driver_id = driver.get("driver_id") or driver.get("position")
+        lap_time = driver.get("best_lap_time") or driver.get("fastest_lap_time") or driver.get("best_time") or 0
+        try:
+            lap_time = float(lap_time)
+            if 0 < lap_time < best_lap_time:
+                best_lap_time = lap_time
+                fastest_lap_driver_id = driver.get("driver_id") or driver.get("finishing_position")
+        except (ValueError, TypeError):
+            continue
 
+    # 4. Process Top 36 Drivers
     for driver in driver_rows[:36]:
-        pos = driver.get("position") or driver.get("finishing_position") or ""
-        
-        full_name = driver.get("driver_name") or driver.get("name") or ""
-        if " " in full_name:
-            first_name, last_name = full_name.split(" ", 1)
-        else:
-            first_name = driver.get("first_name", full_name)
-            last_name = driver.get("last_name", "")
+        pos = driver.get("finishing_position") or driver.get("position", "")
 
-        pts = int(driver.get("points") or driver.get("points_earned") or 0)
-        s1 = int(driver.get("stage_1_points") or driver.get("s1_points") or 0)
-        s2 = int(driver.get("stage_2_points") or driver.get("s2_points") or 0)
-        s3 = int(driver.get("stage_3_points") or driver.get("s3_points") or 0)
+        driver_info = driver.get("driver", {})
+        first_name = driver_info.get("first_name") or driver.get("driver_first_name") or ""
+        last_name = driver_info.get("last_name") or driver.get("driver_last_name") or ""
+
+        if not first_name and not last_name:
+            full_name = driver.get("driver_name") or driver_info.get("full_name") or ""
+            if " " in full_name:
+                first_name, last_name = full_name.split(" ", 1)
+            else:
+                first_name = full_name
+
+        s1 = int(driver.get("stage_1_points", 0) or driver.get("stage1_points", 0) or 0)
+        s2 = int(driver.get("stage_2_points", 0) or driver.get("stage2_points", 0) or 0)
+        s3 = int(driver.get("stage_3_points", 0) or driver.get("stage3_points", 0) or 0)
+
+        # Base finishing points calculation if points total is unpopulated
+        pts = int(driver.get("points_earned", 0) or driver.get("points", 0) or 0)
+        if pts == 0 and pos:
+            try:
+                p = int(pos)
+                base_pts = 40 if p == 1 else max(1, 36 - (p - 2))
+                pts = base_pts + s1 + s2 + s3
+            except ValueError:
+                pts = 0
 
         driver_identifier = driver.get("driver_id") or pos
         is_fastest_lap = 1 if driver_identifier == fastest_lap_driver_id else 0
 
         csv_lines.append(f"{pos},{first_name},{last_name},{pts},{s1},{s2},{s3},{is_fastest_lap}")
 
+    # Write output CSV
     with open("race_results.csv", "w", encoding="utf-8") as f:
         f.write("\n".join(csv_lines))
 
-    print("race_results.csv generated successfully!")
+    print("race_results.csv generated successfully with stage points and fastest lap data!")
 
 if __name__ == "__main__":
     generate_weekly_csv()
