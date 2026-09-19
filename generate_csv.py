@@ -3,44 +3,42 @@ import json
 import urllib.parse
 from curl_cffi import requests
 
-def fetch_nascar_json_via_proxy(endpoint_path):
+WORKER_URL = "https://fragrant-bonus-ba99.jsaxon2.workers.dev"
+
+def fetch_nascar_via_worker(endpoint_path):
     """
-    Routes NASCAR CDN requests through an edge proxy to bypass 
-    GitHub Actions datacenter IP blocks, while maintaining real browser headers.
+    Routes requests through your dedicated Cloudflare Worker, trying both CPM and Cacher endpoints.
     """
-    target_url = f"https://cf.nascar.com/cpm/prod/{endpoint_path}"
-    encoded_url = urllib.parse.quote(target_url, safe='')
-    
-    # Primary and fallback proxies
-    proxy_urls = [
-        f"https://corsproxy.io/?{encoded_url}",
-        f"https://api.allorigins.win/raw?url={encoded_url}"
+    targets = [
+        f"https://cf.nascar.com/cpm/prod/{endpoint_path}",
+        f"https://cf.nascar.com/cacher/{endpoint_path}"
     ]
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.nascar.com/"
-    }
+    for target in targets:
+        encoded_url = urllib.parse.quote(target, safe='')
+        proxy_url = f"{WORKER_URL}?url={encoded_url}"
 
-    for proxy_url in proxy_urls:
         try:
-            response = requests.get(proxy_url, headers=headers, impersonate="chrome120", timeout=15)
+            response = requests.get(
+                proxy_url, 
+                impersonate="chrome120", 
+                timeout=20
+            )
             if response.status_code == 200:
                 return response.json()
             else:
-                print(f"Proxy HTTP {response.status_code} for {proxy_url}")
+                print(f"Worker HTTP {response.status_code} for target: {target}")
         except Exception as e:
-            print(f"Error fetching via proxy: {e}")
+            print(f"Error requesting {target} via Worker: {e}")
 
     return None
 
 def generate_weekly_csv():
-    print("Fetching 2026 schedule feed via edge proxy...")
-    schedule_data = fetch_nascar_json_via_proxy("2026/1/schedule.json")
+    print("Fetching 2026 schedule feed via Cloudflare Worker...")
+    schedule_data = fetch_nascar_via_worker("2026/1/schedule.json")
 
     if not schedule_data:
-        print("Error: Could not retrieve schedule feed.")
+        print("Error: Could not retrieve schedule feed via worker.")
         sys.exit(1)
 
     races = schedule_data.get("race_list", schedule_data) if isinstance(schedule_data, dict) else schedule_data
@@ -52,7 +50,7 @@ def generate_weekly_csv():
     ]
 
     if not completed_races:
-        print("Error: No completed 2026 Cup Series races found in feed.")
+        print("Error: No completed 2026 Cup Series races found.")
         sys.exit(1)
 
     latest_race = completed_races[-1]
@@ -60,11 +58,11 @@ def generate_weekly_csv():
     season = latest_race.get("season", 2026)
     series_id = latest_race.get("series_id", 1)
 
-    print(f"Found latest completed race: {latest_race.get('race_name', 'Unknown')} (ID: {race_id})")
+    print(f"Found latest race: {latest_race.get('race_name', 'Unknown')} (ID: {race_id})")
 
     # Fetch race results JSON
     results_endpoint = f"{season}/{series_id}/{race_id}/results.json"
-    results_data = fetch_nascar_json_via_proxy(results_endpoint)
+    results_data = fetch_nascar_via_worker(results_endpoint)
 
     if not results_data:
         print("Error: Could not retrieve race results.")
@@ -77,7 +75,7 @@ def generate_weekly_csv():
 
     csv_lines = ["Position,First_Name,Last_Name,Points,Stage_1,Stage_2,Stage_3,Fastest_Lap"]
 
-    # Identify driver with overall fastest lap
+    # Identify driver with fastest lap overall
     fastest_lap_driver_id = None
     best_lap_time = float('inf')
     for driver in driver_rows:
