@@ -2,8 +2,11 @@ name: Generate NASCAR CSV via Gemini AI
 
 on:
   schedule:
-    - cron: '0 12 * * 1' # Runs every Monday at 12:00 UTC
-  workflow_dispatch: # Allows manual run anytime from GitHub/Mobile App
+    - cron: '0 12 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write  # Grants write permission to push commits
 
 jobs:
   generate-csv:
