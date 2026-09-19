@@ -22,9 +22,7 @@ jobs:
         python-version: '3.11'
 
     - name: Install dependencies
-      run: pip install google-genai, 
-     pip install requests, 
-     pip install requests cloudscraper
+      run: pip install requests cloudscraper
 
     - name: Run CSV Generator
       env:
