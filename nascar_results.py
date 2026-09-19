@@ -121,20 +121,21 @@ def main():
               f"{row['Points']:4}  {row['Stage_1']:2}  {row['Stage_2']:2}  "
               f"{row['Stage_3']:2}  {row['Fastest_Lap']:4}")
 
-    # Save CSV
+       # Save CSV (dated version)
     output_dir = Path("nascar_results")
     output_dir.mkdir(exist_ok=True)
-    csv_path = output_dir / f"{race_date}_{race_id}_custom.csv"
 
     fieldnames = ["Position", "First_Name", "Last_Name", "Points",
                   "Stage_1", "Stage_2", "Stage_3", "Fastest_Lap"]
 
+    # 1. Dated file (keeps history)
+    csv_path = output_dir / f"{race_date}_{race_id}_custom.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
-    # Also save as latest.csv for easy access
+    # 2. Always update latest.csv (this is what your website will use)
     latest_path = output_dir / "latest.csv"
     with open(latest_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -142,7 +143,8 @@ def main():
         writer.writerows(rows)
 
     print("\n" + "-" * 65)
-    print(f"Saved → {csv_path}")
+    print(f"Saved dated  → {csv_path}")
+    print(f"Saved latest → {latest_path}")
     print("Done.")
 
 
