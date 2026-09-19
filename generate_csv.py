@@ -1,27 +1,37 @@
 import sys
 import json
-import urllib.request
-import urllib.parse
+from playwright.sync_api import sync_playwright
 
-def fetch_json_via_proxy(target_url):
-    """Bypasses Cloudflare IP blocks on GitHub Actions using a public proxy."""
-    encoded_url = urllib.parse.quote(target_url)
-    proxy_url = f"https://api.allorigins.win/get?url={encoded_url}"
-    
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    req = urllib.request.Request(proxy_url, headers=headers)
-    
-    with urllib.request.urlopen(req, timeout=20) as response:
-        proxy_data = json.loads(response.read().decode('utf-8'))
-        # allorigins wraps the target response in a "contents" string
-        return json.loads(proxy_data['contents'])
+def fetch_json_with_playwright(url):
+    """Uses Playwright to bypass Cloudflare anti-bot checks and fetch JSON."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        # Create a browser context with desktop User-Agent
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
+        
+        response = page.goto(url, wait_until="networkidle", timeout=30000)
+        if not response or response.status != 200:
+            print(f"Failed to load {url} (Status: {response.status if response else 'No Response'})")
+            browser.close()
+            return None
+
+        content = page.locator("body").inner_text()
+        browser.close()
+        return json.loads(content)
 
 def get_latest_race_csv():
     try:
-        # 1. Fetch 2026 Cup Series Schedule via proxy
+        # 1. Fetch 2026 Cup Series Schedule
         sched_url = "https://cf.nascar.com/cpm/prod/2026/1/schedule.json"
-        print("Fetching schedule via proxy...")
-        schedule_data = fetch_json_via_proxy(sched_url)
+        print("Fetching schedule via Playwright...")
+        schedule_data = fetch_json_with_playwright(sched_url)
+
+        if not schedule_data:
+            print("Error: Could not retrieve schedule data.")
+            sys.exit(1)
 
         races = schedule_data.get("race_list", schedule_data) if isinstance(schedule_data, dict) else schedule_data
 
@@ -44,10 +54,14 @@ def get_latest_race_csv():
 
         # 2. Fetch specific race results JSON
         results_url = f"https://cf.nascar.com/cpm/prod/{season}/{series_id}/{race_id}/results.json"
-        results_data = fetch_json_via_proxy(results_url)
+        results_data = fetch_json_with_playwright(results_url)
+
+        if not results_data:
+            print("Error: Could not retrieve race results data.")
+            sys.exit(1)
 
     except Exception as e:
-        print(f"Error fetching data via proxy: {e}")
+        print(f"Error executing Playwright script: {e}")
         sys.exit(1)
 
     # 3. Parse driver rows into strict CSV format
