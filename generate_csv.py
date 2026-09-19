@@ -1,39 +1,49 @@
 import sys
 import json
-import urllib.request
 import csv
+from curl_cffi import requests
 
-def fetch_json_espn(url):
-    """Fetches JSON using standard urllib with browser-mimicking headers."""
+def generate_weekly_csv():
+    # Create a persistent browser session with full Chrome 120 TLS fingerprinting
+    session = requests.Session(impersonate="chrome120")
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9"
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.espn.com/",
+        "Origin": "https://www.espn.com",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-site"
     }
-    req = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            if resp.status == 200:
-                return json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        print(f"Fetch failed for {url}: {e}")
-    return None
 
-def generate_weekly_csv():
     print("Fetching Cup Series schedule from ESPN API...")
-    
-    # ESPN Premier (NASCAR Cup Series) scoreboard endpoint
     scoreboard_url = "https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard"
-    data = fetch_json_espn(scoreboard_url)
+    
+    data = None
+    try:
+        res = session.get(scoreboard_url, headers=headers, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+        else:
+            print(f"Primary endpoint returned HTTP {res.status_code}. Retrying historical date range...")
+    except Exception as e:
+        print(f"Error requesting primary endpoint: {e}")
 
     if not data or "events" not in data:
-        # Fallback to season date range search
-        print("Checking full season schedule range...")
-        scoreboard_url = "https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard?dates=20260201-20261130"
-        data = fetch_json_espn(scoreboard_url)
+        fallback_url = "https://site.api.espn.com/apis/site/v2/sports/racing/nascar-premier/scoreboard?dates=20260201-20261130"
+        try:
+            res = session.get(fallback_url, headers=headers, timeout=15)
+            if res.status_code == 200:
+                data = res.json()
+            else:
+                print(f"Fallback endpoint returned HTTP {res.status_code}")
+        except Exception as e:
+            print(f"Error requesting fallback endpoint: {e}")
 
     if not data or "events" not in data:
-        print("Error: Unable to retrieve schedule or event list from ESPN.")
+        print("Error: Unable to retrieve schedule or event list from ESPN API.")
         sys.exit(1)
 
     completed_events = []
@@ -46,7 +56,6 @@ def generate_weekly_csv():
         print("Error: No completed 2026 Cup Series events found in feed.")
         sys.exit(1)
 
-    # Get latest completed race event
     latest_event = completed_events[-1]
     race_name = latest_event.get("name", "NASCAR Cup Race")
     print(f"Targeting Latest Race: {race_name}")
@@ -58,7 +67,6 @@ def generate_weekly_csv():
         print("Error: No driver entry records found in target event.")
         sys.exit(1)
 
-    # Sort drivers by finish position
     def safe_order(c):
         try:
             return int(c.get("order") or c.get("place") or 999)
@@ -67,7 +75,6 @@ def generate_weekly_csv():
 
     competitors.sort(key=safe_order)
 
-    # Parse Top 36 Drivers
     driver_rows = []
     for comp in competitors[:36]:
         pos = comp.get("order") or comp.get("place") or ""
@@ -108,7 +115,6 @@ def generate_weekly_csv():
 
         driver_rows.append([pos, first_name, last_name, pts, s1, s2, s3, is_fastest_lap])
 
-    # Write CSV
     csv_headers = ["Position", "First_Name", "Last_Name", "Points", "Stage_1", "Stage_2", "Stage_3", "Fastest_Lap"]
     with open("race_results.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
