@@ -26,7 +26,7 @@ def generate_weekly_csv():
         try:
             # Using model without Search Grounding overhead to conserve quota
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.6-flash',
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.1
