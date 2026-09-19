@@ -1,35 +1,29 @@
 import sys
 import json
-from playwright.sync_api import sync_playwright
+import urllib.request
+import urllib.parse
 
-def get_nascar_json(endpoint):
-    """Uses Playwright API request context to bypass Cloudflare without loading UI pages."""
-    with sync_playwright() as p:
-        request_context = p.request.new_context(
-            extra_http_headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Referer": "https://www.nascar.com/",
-                "Accept": "application/json, text/plain, */*"
-            }
-        )
-        
-        response = request_context.get(endpoint, timeout=15000)
-        if response.status != 200:
-            print(f"HTTP Error {response.status} for {endpoint}")
-            return None
-        
-        return response.json()
+# Your Cloudflare Worker URL
+WORKER_URL = "https://fragrant-bonus-ba99.jsaxon2.workers.dev"
+
+def fetch_via_worker(target_url):
+    """Fetches NASCAR CDN feeds through your Cloudflare Worker pass-through."""
+    encoded_url = urllib.parse.quote(target_url, safe='')
+    proxy_request_url = f"{WORKER_URL}?url={encoded_url}"
+    
+    req = urllib.request.Request(proxy_request_url)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except Exception as e:
+        print(f"Error fetching {target_url} via Worker: {e}")
+        return None
 
 def generate_weekly_csv():
-    # 1. Fetch 2026 Cup Series Schedule Index
+    # 1. Fetch 2026 Schedule Feed
     sched_url = "https://cf.nascar.com/cpm/prod/2026/1/schedule.json"
-    print("Fetching 2026 schedule feed...")
-    schedule_data = get_nascar_json(sched_url)
-
-    if not schedule_data:
-        # Fallback to cacher endpoint
-        print("Schedule endpoint blocked. Trying cacher fallback...")
-        schedule_data = get_nascar_json("https://cf.nascar.com/cacher/2026/1/schedule.json")
+    print("Fetching 2026 schedule via Cloudflare Worker...")
+    schedule_data = fetch_via_worker(sched_url)
 
     if not schedule_data:
         print("Error: Could not retrieve schedule feed.")
@@ -56,12 +50,7 @@ def generate_weekly_csv():
 
     # 2. Fetch specific race results JSON
     results_url = f"https://cf.nascar.com/cpm/prod/{season}/{series_id}/{race_id}/results.json"
-    results_data = get_nascar_json(results_url)
-
-    if not results_data:
-        print("Primary results failed. Trying cacher results fallback...")
-        results_url = f"https://cf.nascar.com/cacher/{season}/{series_id}/{race_id}/results.json"
-        results_data = get_nascar_json(results_url)
+    results_data = fetch_via_worker(results_url)
 
     if not results_data:
         print("Error: Could not retrieve race results.")
@@ -99,7 +88,7 @@ def generate_weekly_csv():
         s2 = driver.get("stage_2_points", 0)
         s3 = driver.get("stage_3_points", 0)
 
-        # Flag 1 if fastest lap, else 0
+        # Flag 1 if driver set fastest lap, else 0
         driver_identifier = driver.get("driver_id") or pos
         is_fastest_lap = 1 if driver_identifier == fastest_lap_driver_id else 0
 
