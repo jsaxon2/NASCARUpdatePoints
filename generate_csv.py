@@ -3,9 +3,12 @@ import json
 import urllib.request
 
 def fetch_espn_json(url):
-    """Fetches public ESPN racing feed without Cloudflare restrictions."""
+    """Fetches public ESPN racing feed using full browser headers to avoid 403 blocks."""
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.espn.com/racing/nascar/"
     }
     req = urllib.request.Request(url, headers=headers)
     try:
