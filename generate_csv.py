@@ -14,17 +14,19 @@ def generate_weekly_csv():
 
     prompt = """
     Provide the NASCAR Cup Series race results for all 36 drivers in the most recent completed race.
-    Format as a raw CSV block without markdown fences.
+    Format as a raw CSV block without markdown fences or extra commentary.
     
     Header format:
     Position,First_Name,Last_Name,Points,Stage_1,Stage_2,Stage_3,Fastest_Lap
     """
 
-    # Retry logic for 429 Rate Limits
-    max_retries = 3
-    for attempt in range(max_retries):
+    max_retries = 5
+    base_delay = 10  # Seconds to wait before first retry
+
+    for attempt in range(1, max_retries + 1):
         try:
-            # Using model without Search Grounding overhead to conserve quota
+            print(f"Sending request to Gemini API (Attempt {attempt}/{max_retries})...")
+            
             response = client.models.generate_content(
                 model='gemini-3.6-flash',
                 contents=prompt,
@@ -48,14 +50,17 @@ def generate_weekly_csv():
                 return
 
         except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                print(f"Quota exceeded (429). Retrying in 30 seconds... (Attempt {attempt + 1}/{max_retries})")
-                time.sleep(30)
+            err_msg = str(e)
+            if "503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                wait_time = base_delay * (2 ** (attempt - 1))
+                print(f"Temporary server overload/quota error: {e}")
+                print(f"Waiting {wait_time} seconds before retrying...")
+                time.sleep(wait_time)
             else:
-                print(f"Error generating CSV: {e}")
+                print(f"Non-retryable error encountered: {e}")
                 sys.exit(1)
 
-    print("Error: Exceeded max retries due to quota rate limits.")
+    print("Error: Max retries exceeded. API remained unavailable.")
     sys.exit(1)
 
 if __name__ == "__main__":
