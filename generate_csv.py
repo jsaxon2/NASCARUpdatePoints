@@ -5,9 +5,8 @@ from curl_cffi import requests
 def fetch_nascar_json(endpoint_path):
     """
     Fetches JSON feeds directly from NASCAR's CDN by spoofing Chrome's TLS fingerprint (JA3/JA4).
-    This bypasses Cloudflare WAF restrictions completely without proxies.
+    This bypasses Cloudflare WAF restrictions completely without external proxies.
     """
-    # Primary URL and Backup Cacher URL
     urls = [
         f"https://cf.nascar.com/cpm/prod/{endpoint_path}",
         f"https://cf.nascar.com/cacher/{endpoint_path}"
@@ -23,7 +22,6 @@ def fetch_nascar_json(endpoint_path):
 
     for url in urls:
         try:
-            # impersonate="chrome120" mimics a real desktop browser TLS client
             response = requests.get(url, headers=headers, impersonate="chrome120", timeout=15)
             if response.status_code == 200:
                 return response.json()
@@ -35,7 +33,6 @@ def fetch_nascar_json(endpoint_path):
     return None
 
 def generate_weekly_csv():
-    # 1. Fetch 2026 Cup Series Schedule Feed
     print("Fetching 2026 schedule feed via TLS impersonation...")
     schedule_data = fetch_nascar_json("2026/1/schedule.json")
 
@@ -62,7 +59,7 @@ def generate_weekly_csv():
 
     print(f"Found latest completed race: {latest_race.get('race_name', 'Unknown')} (ID: {race_id})")
 
-    # 2. Fetch specific race results JSON
+    # Fetch specific race results JSON
     results_endpoint = f"{season}/{series_id}/{race_id}/results.json"
     results_data = fetch_nascar_json(results_endpoint)
 
@@ -70,7 +67,7 @@ def generate_weekly_csv():
         print("Error: Could not retrieve race results.")
         sys.exit(1)
 
-    # 3. Parse driver rows into strict CSV format
+    # Parse driver rows into strict CSV format
     driver_rows = results_data.get("data", results_data) if isinstance(results_data, dict) else results_data
     if not isinstance(driver_rows, list):
         print("Error: Unexpected JSON structure in race results.")
@@ -78,7 +75,7 @@ def generate_weekly_csv():
 
     csv_lines = ["Position,First_Name,Last_Name,Points,Stage_1,Stage_2,Stage_3,Fastest_Lap"]
 
-    # Identify driver with fastest lap overall (lowest lap time)
+    # Identify driver with fastest lap overall
     fastest_lap_driver_id = None
     best_lap_time = float('inf')
     for driver in driver_rows:
@@ -103,17 +100,16 @@ def generate_weekly_csv():
         s2 = driver.get("stage_2_points", 0)
         s3 = driver.get("stage_3_points", 0)
 
-        # Binary 1 or 0 flag for fastest lap
+        # Binary flag (1 if fastest lap, else 0)
         driver_identifier = driver.get("driver_id") or pos
         is_fastest_lap = 1 if driver_identifier == fastest_lap_driver_id else 0
 
         csv_lines.append(f"{pos},{first_name},{last_name},{pts},{s1},{s2},{s3},{is_fastest_lap}")
 
-    # Write output file
     with open("race_results.csv", "w", encoding="utf-8") as f:
         f.write("\n".join(csv_lines))
 
-    print("race_results.csv created successfully with current 2026 data!")
+    print("race_results.csv created successfully!")
 
 if __name__ == "__main__":
     generate_weekly_csv()
