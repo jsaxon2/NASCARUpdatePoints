@@ -1,36 +1,44 @@
-name: Generate NASCAR Race Results CSV
+name: Weekly NASCAR Cup Results
 
 on:
+  # Run every Monday at 10:00 UTC (6:00 AM EDT / 5:00 AM EST)
   schedule:
-    - cron: '0 6 * * 1' # Runs every Monday morning at 6:00 AM UTC
-  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+    - cron: '0 10 * * 1'
 
-permissions:
-  contents: write # Enables write/push permissions for GITHUB_TOKEN
+  # Allow manual runs from the Actions tab
+  workflow_dispatch:
 
 jobs:
-  build:
+  fetch-results:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
-          pip install curl_cffi
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Run CSV Generator
-        run: python generate_csv.py
+      - name: Run NASCAR results script
+        run: python nascar_results.py
 
-      - name: Commit and push generated CSV
+      - name: Commit and push results (if any new files)
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add race_results.csv
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Automated update: race_results.csv" && git push)
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Only commit if new CSV files were created
+          if [ -n "$(git status --porcelain nascar_results/)" ]; then
+            git add nascar_results/
+            git commit -m "NASCAR results $(date +%Y-%m-%d)"
+            git push
+          else
+            echo "No new results to commit"
+          fi
