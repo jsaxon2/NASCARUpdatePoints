@@ -1,9 +1,9 @@
 name: Weekly NASCAR Cup Results
 
-on:
+# on:
   # Run every Monday at 10:00 UTC (6:00 AM EDT / 5:00 AM EST)
-  schedule:
-    - cron: '0 10 * * 1'
+  # schedule:
+    # - cron: '0 10 * * 1'
 
   # Allow manual runs from the Actions tab
   workflow_dispatch:
